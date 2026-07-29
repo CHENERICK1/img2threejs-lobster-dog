@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lobster Dog — 3D Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; }
+    #app { width: 100%; height: 100%; position: relative; }
+    #canvas-container { width: 100%; height: 100%; display: block; }
+    #ui-panel {
+      position: absolute; top: 12px; right: 12px;
+      background: rgba(20, 20, 40, 0.88);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 14px 16px;
+      min-width: 220px;
+      font-size: 13px;
+      max-height: calc(100% - 24px);
+      overflow-y: auto;
+      z-index: 10;
+    }
+    #ui-panel h2 { font-size: 15px; margin-bottom: 10px; color: #fff; font-weight: 600; letter-spacing: 0.3px; }
+    #ui-panel .desc { font-size: 12px; color: #aaa; margin-bottom: 12px; line-height: 1.5; }
+    .control-group { margin-bottom: 10px; }
+    .control-group label { display: block; font-size: 12px; color: #bbb; margin-bottom: 3px; }
+    .control-group button, .control-group select {
+      width: 100%; padding: 6px 10px; border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px; background: rgba(255,255,255,0.08); color: #e0e0e0;
+      cursor: pointer; font-size: 12px; transition: background 0.2s;
+    }
+    .control-group button:hover { background: rgba(255,255,255,0.15); }
+    .control-group button.active { background: #e63946; border-color: #e63946; }
+    .control-group input[type="range"] { width: 100%; accent-color: #e63946; }
+    .btn-row { display: flex; gap: 4px; }
+    .btn-row button { flex: 1; }
+    #selected-part { margin-top: 8px; padding: 8px; background: rgba(255,255,255,0.06); border-radius: 6px; font-size: 12px; display: none; }
+    #selected-part .part-name { font-weight: 600; color: #fff; }
+    #selected-part .part-info { color: #999; margin-top: 2px; }
+    #loading-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: #1a1a2e; display: flex; align-items: center; justify-content: center;
+      z-index: 100; flex-direction: column; gap: 16px;
+    }
+    #loading-overlay .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1); border-top-color: #e63946; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #error-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: #1a1a2e; display: none; align-items: center; justify-content: center;
+      z-index: 101; flex-direction: column; gap: 12px; text-align: center; padding: 32px;
+    }
+    #error-overlay h2 { color: #e63946; }
+    #error-overlay p { color: #aaa; max-width: 400px; line-height: 1.6; }
+    #error-overlay button { margin-top: 8px; padding: 8px 20px; border: none; border-radius: 6px; background: #e63946; color: white; cursor: pointer; }
+    .comparison-hint { font-size: 11px; color: #888; margin-top: 6px; font-style: italic; }
+    .toggle-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc; cursor: pointer; }
+    .toggle-label input { accent-color: #e63946; }
+    .feature-list { margin-top: 8px; }
+    .feature-item { font-size: 11px; color: #999; padding: 2px 0; }
+    .feature-item .check { color: #4ade80; margin-right: 4px; }
+    .feature-item .warn { color: #fbbf24; margin-right: 4px; }
+    .feature-item .miss { color: #f87171; margin-right: 4px; }
+    @media (max-width: 600px) {
+      #ui-panel { top: 8px; right: 8px; left: 8px; min-width: unset; font-size: 12px; padding: 10px 12px; max-height: 50%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div style="color:#999;font-size:14px;">Loading 3D Scene...</div>
+  </div>
+  <div id="error-overlay">
+    <h2>⚠ WebGL Required</h2>
+    <p>This viewer requires WebGL to render the 3D model. Your browser or device may not support it, or a driver issue is preventing initialization.</p>
+    <button onclick="location.reload()">Reload</button>
+  </div>
+  <div id="app">
+    <div id="canvas-container"></div>
+    <div id="ui-panel">
+      <h2>🦞 Lobster Dog</h2>
+      <div class="desc">Pixel-art Westie in a lobster costume — interactive 3D reconstruction</div>
+      <div class="control-group">
+        <label>View</label>
+        <div class="btn-row">
+          <button id="btn-reset" title="Reset camera">Reset</button>
+          <button id="btn-autorotate" title="Toggle auto-rotate">⟳ Auto</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <label>Comparison</label>
+        <div class="btn-row">
+          <button id="btn-reference">📷 Reference</button>
+          <button id="btn-sidebyside" class="active">Side-by-side</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <label>Explode: <span id="explode-value">0%</span></label>
+        <input type="range" id="explode-slider" min="0" max="100" value="0" />
+      </div>
+      <div class="control-group">
+        <label>Background</label>
+        <select id="bg-select">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+          <option value="grid">Grid</option>
+        </select>
+      </div>
+      <div id="selected-part">
+        <div class="part-name" id="part-name">—</div>
+        <div class="part-info" id="part-info">Click on a part of the model</div>
+      </div>
+      <div class="feature-list">
+        <div class="feature-item"><span class="check">✓</span> Antennae &amp; hood eyes</div>
+        <div class="feature-item"><span class="check">✓</span> Dog face (fur, eyes, nose, tongue)</div>
+        <div class="feature-item"><span class="check">✓</span> Segmented lobster torso</div>
+        <div class="feature-item"><span class="warn">≈</span> Pincer claws (inferred grip)</div>
+        <div class="feature-item"><span class="warn">≈</span> Tail (partially occluded)</div>
+        <div class="feature-item"><span class="miss">✗</span> Back details (not visible)</div>
+      </div>
+      <div class="comparison-hint">Click any part to see details. Use mouse/touch to orbit.</div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
